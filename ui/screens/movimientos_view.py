@@ -1,5 +1,5 @@
-from PySide6 import QtWidgets
-from PySide6.QtWidgets import QInputDialog
+from PySide6 import QtCore, QtWidgets
+from PySide6.QtWidgets import QInputDialog, QTableWidget, QTableWidgetItem
 
 from core.models.lote import Lote
 from core.models.movimiento import TipoMovimiento
@@ -17,60 +17,108 @@ class MovimientosView(QtWidgets.QWidget):
             LoteRepo(db), MovimientoRepo(db), FIFOSelector(LoteRepo(db))
         )
 
-        # combo con lotes
-        self.cmb_lote = QtWidgets.QComboBox()
-        self._cargar_lotes()
+        self.setStyleSheet(
+            """
+            QPushButton {
+                padding: 8px 16px;
+                border-radius: 6px;
+                font-size: 13px;
+                background-color: #e0e0e0;
+            }
+            QPushButton:hover {
+                background-color: #d5d5d5;
+            }
+            QPushButton:checked {
+                background-color: #3f51b5;
+                color: white;
+                font-weight: bold;
+                border: 2px solid #303f9f;
+            }
+        """
+        )
 
-        # botones
-        btn_ent = QtWidgets.QPushButton("Entrada")
-        btn_sal = QtWidgets.QPushButton("Salida")
-        btn_new_lote = QtWidgets.QPushButton("Entrada nuevo lote")  # ← NUEVO
+        # Campo de búsqueda
+        self.search_input = QtWidgets.QLineEdit()
+        self.search_input.setPlaceholderText("Buscar movimiento...")
 
-        btn_ent.clicked.connect(lambda: self._nuevo_movimiento(TipoMovimiento.ENTRADA))
-        btn_sal.clicked.connect(lambda: self._nuevo_movimiento(TipoMovimiento.SALIDA))
-        btn_new_lote.clicked.connect(self._entrada_nuevo_lote)
+        # Botones
+        self.btn_search = QtWidgets.QPushButton("🔍")
+        self.btn_ent = QtWidgets.QPushButton("➕ Entrada")
+        self.btn_sal = QtWidgets.QPushButton("📤 Salida")
+        self.btn_new_lote = QtWidgets.QPushButton("🧾 Entrada nuevo lote")
 
-        h = QtWidgets.QHBoxLayout()
-        h.addWidget(self.cmb_lote)
-        h.addWidget(btn_ent)
-        h.addWidget(btn_sal)
-        h.addWidget(btn_new_lote)
-        h.addStretch()
+        for btn in [self.btn_ent, self.btn_sal, self.btn_new_lote]:
+            btn.setCheckable(True)
+
+        self.btn_search.clicked.connect(self._buscar_movimientos)
+        self.btn_ent.clicked.connect(
+            lambda: self._accion(self.btn_ent, TipoMovimiento.ENTRADA)
+        )
+        self.btn_sal.clicked.connect(
+            lambda: self._accion(self.btn_sal, TipoMovimiento.SALIDA)
+        )
+        self.btn_new_lote.clicked.connect(lambda: self._accion(self.btn_new_lote, None))
+
+        # Encabezado
+        top = QtWidgets.QHBoxLayout()
+        top.addWidget(self.search_input)
+        top.addWidget(self.btn_search)
+        top.addStretch()
+        top.addWidget(self.btn_ent)
+        top.addWidget(self.btn_sal)
+        top.addWidget(self.btn_new_lote)
+
+        # Tabla de movimientos
+        self.table = QTableWidget()
+        self.table.setColumnCount(6)
+        self.table.setHorizontalHeaderLabels(
+            ["ID", "Fecha", "Tipo", "Medicamento", "Cantidad", "Motivo"]
+        )
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
 
         self.lbl_info = QtWidgets.QLabel("Seleccione un lote y haga la operación.")
 
         v = QtWidgets.QVBoxLayout(self)
-        v.addLayout(h)
+        v.addLayout(top)
+        v.addWidget(self.table)
         v.addWidget(self.lbl_info)
 
-    # ────────────────────────────────────────────────────────────
-    def _cargar_lotes(self):
-        self.cmb_lote.clear()
-        for lote in LoteRepo(SessionLocal()).list():
-            self.cmb_lote.addItem(f"{lote.codigo} (stock {lote.stock})", lote)
+    def _accion(self, btn, tipo):
+        self.btn_ent.setChecked(False)
+        self.btn_sal.setChecked(False)
+        self.btn_new_lote.setChecked(False)
+
+        btn.setChecked(True)
+        QtCore.QTimer.singleShot(300, lambda: btn.setChecked(False))
+
+        if tipo:
+            self._nuevo_movimiento(tipo)
+        else:
+            self._entrada_nuevo_lote()
 
     def _nuevo_movimiento(self, tipo: TipoMovimiento):
-        lote: Lote = self.cmb_lote.currentData()
-        if lote is None:
-            return
-
         dlg = MovimientoForm(self, tipo)
         if dlg.exec() != QtWidgets.QDialog.Accepted:
             return
 
         data = dlg.get_data()
         try:
-            if tipo is TipoMovimiento.ENTRADA:
-                self.inv.entrada(lote, data["cantidad"], data["motivo"])
+            if tipo == TipoMovimiento.ENTRADA:
+                self.inv.entrada_nueva(
+                    "codigo-temporal",
+                    1,
+                    QtCore.QDate.currentDate(),
+                    data["cantidad"],
+                    data["motivo"],
+                )
             else:
-                self.inv.salida(lote.medicamento_id, data["cantidad"], data["motivo"])
+                self.inv.salida(1, data["cantidad"], data["motivo"])
         except ValueError as e:
             QtWidgets.QMessageBox.warning(self, "Error", str(e))
         else:
             QtWidgets.QMessageBox.information(self, "OK", "Movimiento registrado")
-        self._cargar_lotes()
 
-    # -------- Entrada de lote NUEVO ---------------------------------
     def _entrada_nuevo_lote(self):
         dlg = MovimientoForm(self, TipoMovimiento.ENTRADA, necesita_fecha=True)
         if dlg.exec() != QtWidgets.QDialog.Accepted:
@@ -82,10 +130,9 @@ class MovimientosView(QtWidgets.QWidget):
             return
 
         try:
-            # TODO: seleccionar medicamento desde la interfaz; por ahora id=1
             self.inv.entrada_nueva(
                 codigo=codigo,
-                medicamento_id=1,
+                medicamento_id=1,  # FIXME
                 fecha_venc=data["fecha_venc"],
                 cantidad=data["cantidad"],
                 motivo=data["motivo"],
@@ -94,4 +141,9 @@ class MovimientosView(QtWidgets.QWidget):
             QtWidgets.QMessageBox.warning(self, "Error", str(e))
         else:
             QtWidgets.QMessageBox.information(self, "OK", "Lote creado")
-        self._cargar_lotes()
+
+    def _buscar_movimientos(self):
+        texto = self.search_input.text().strip()
+        if not texto:
+            return
+        QtWidgets.QMessageBox.information(self, "Buscar", f"Búsqueda: {texto}")

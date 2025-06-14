@@ -11,4 +11,7 @@ def apply_theme(app: QApplication, dark: bool = True) -> None:
     QApplication.setStyle("Fusion")
     qss_file = Path("ui/style_dark.qss" if dark else "ui/style_light.qss")
     if qss_file.exists():
-        app.setStyleSheet(qss_file.read_text(encoding="utf-8"))
+        qss = qss_file.read_text(encoding="utf-8")
+        app.setStyleSheet(qss)
+    else:
+        print(f"[theme] No se encontró: {qss_file}. Se usará estilo Fusion sin QSS.")

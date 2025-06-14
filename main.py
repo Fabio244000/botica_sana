@@ -5,11 +5,13 @@ from infrastructure.db import SessionLocal
 from infrastructure.hash_bcrypt import BcryptHasher
 from infrastructure.repos import UsuarioRepo
 from ui.screens.main_window import MainWindow
+from ui.theme import apply_theme
 from ui.widgets.login_dialog import LoginDialog
 
 
 def main():
     app = QtWidgets.QApplication([])
+    apply_theme(app, dark=False)
 
     # servicio auth
     auth = AuthService(UsuarioRepo(SessionLocal()), BcryptHasher())
