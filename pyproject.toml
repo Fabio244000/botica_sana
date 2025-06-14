@@ -1,0 +1,12 @@
+[project]
+name = "botica_sana"
+version = "0.1.0"
+requires-python = ">=3.12"
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+# NUEVO: dile a setuptools qué paquetes incluir
+[tool.setuptools.packages.find]
+include = ["core*", "infrastructure"]  # solo exportamos el dominio; puedes añadir "ui*", "cli*"… si los expusieras

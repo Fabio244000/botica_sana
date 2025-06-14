@@ -1,0 +1,110 @@
+# Botica Sana – Sistema de Inventario
+
+Gestión de medicamentos para una botica (farmacia) sobre Windows 11.
+GUI en PySide 6, lógica en Python 3.12 y persistencia con SQLite/PostgreSQL vía SQLAlchemy + Alembic.
+
+## ✨ Estado actual
+
+| Área | Avance |
+|------|--------|
+| **Stack & entorno** | Python 3.12 (Anaconda `conda` env) + requirements.txt configurado |
+| **Dominio (`core/`)** | Entidades, enums y servicios (Catalog, Inventory, Alert, Report, Auth) ✔ con tests |
+
+### Infraestructura (`infrastructure/`)
+
+- `settings.py` con *pydantic-settings*
+- Modelos SQLAlchemy + repos
+  Medicamento/Lote/Movimiento/Usuario
+- Hash adapter **bcrypt**
+- Alembic inicializado (revisión *baseline*)
+
+### Pruebas
+Suite `pytest` verde (dominio + repos)
+
+### GUI
+Esqueleto PySide 6 (`LoginWindow`, `MainWindow`)
+
+## 📂 Estructura de carpetas
+
+```text
+botica_sana/
+├─ core/               # lógica de dominio (Pydantic)
+├─ infrastructure/     # BD, repos, settings, alembic/
+├─ ui/                 # PySide6 screens & widgets
+├─ tests/              # pytest suite
+├─ requirements.txt    # dependencias pip
+└─ README.md           # este archivo
+
+## ⚙️ Stack técnico
+
+| Categoría        | Tecnologías                         |
+|------------------|-------------------------------------|
+| **Lenguaje**     | Python 3.12                         |
+| **GUI**          | PySide 6 / Qt Designer              |
+| **ORM**          | SQLAlchemy 2                        |
+| **Migraciones**  | Alembic                             |
+| **Validación**   | Pydantic v2 (+ *pydantic-settings*) |
+| **Hashing**      | bcrypt                              |
+| **Tests**        | pytest + pytest-cov                 |
+| **Linter & Format** | ruff, black, isort              |
+
+## 🛠 Instalación rápida (Windows 11)
+
+```powershell
+# 1. Clonar e ingresar
+git clone <repo-url> botica_sana
+cd botica_sana
+
+# 2. Crear entorno conda (venv gestionado por conda)
+conda create -n sana_venv python=3.12 -y
+conda activate sana_venv
+
+# 3. Instalar dependencias
+pip install -r requirements.txt
+
+# 4. Configurar variables (opcional) – copiar .env.example → .env
+copy infrastructure\.env.example .env   # y editar si deseas Postgres
+
+# 5. Inicializar BD SQLite + tabla alembic_version
+cd infrastructure
+alembic upgrade head
+cd ..
+
+# 6. Lanzar pruebas (debe salir verde)
+pytest -q
+
+## Requisitos principales
+
+PySide6
+SQLAlchemy>=2
+pydantic>=2
+pydantic-settings
+alembic
+bcrypt
+pytest
+
+## 🔑 Comandos útiles
+
+| Acción                 | PowerShell                                                   |
+|------------------------|--------------------------------------------------------------|
+| Crear nueva migración  | `alembic revision --autogenerate -m "añadir campo X"`        |
+| Aplicar migraciones    | `alembic upgrade head`                                       |
+| Ejecutar app (GUI)     | `python main.py`                                             |
+| Formatear código       | `ruff check . && ruff format .`                              |
+
+## 🚦 Próximos hitos
+
+1. **Iteración 1 – Catálogo GUI**: pantalla CRUD y conexión a `CatalogService`.
+2. **Movimientos GUI** y lógica FIFO en la interfaz.
+3. **Alertas en tiempo real** (icono bandeja / diálogo).
+4. Empaquetado **PyInstaller** + instalador **Inno Setup**.
+
+Consulta el [Task List](canvas://task_list.txt) para la hoja de ruta completa
+
+---
+
+© 2025 Botica Sana. MIT License
+
+
+
+
