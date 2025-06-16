@@ -1,146 +1,215 @@
-from PySide6 import QtCore, QtWidgets
+from __future__ import annotations
+
+import uuid
+from datetime import date
+from typing import Mapping
+
+from PySide6 import QtWidgets
+from PySide6.QtCore import Qt
 
 from core.services.catalog_service import CatalogService
+from core.services.inventory_service import FIFOSelector, InventoryService
+from infrastructure.auth_context import get_current_user
 from infrastructure.db import SessionLocal
-from infrastructure.repos import MedicamentoRepo
+from infrastructure.repos import LoteRepo, MedicamentoRepo, MovimientoRepo
 from ui.widgets.medicamento_form import MedicamentoForm
-from ui.widgets.medicamento_table import MedicamentoTableModel
+from ui.widgets.paginated_medicamento_table import \
+    PaginatedMedicamentoTableModel
+from ui.widgets.toast import Toast
+
+_PER_PAGE = 20
 
 
 class CatalogView(QtWidgets.QWidget):
+    """Vista Catálogo con paginación + filtros."""
+
     def __init__(self):
         super().__init__()
         self.svc = CatalogService(MedicamentoRepo(SessionLocal()))
 
-        # ─── Tabla ──────────────────────────────────────────────
+        # ─── Estado ────────────────────────────────────────────
+        self._page = 1
+        self._total_pages = 1
+        self._filters: Mapping[str, object] | None = None
+
+        # ─── Tabla ─────────────────────────────────────────────
         self.table = QtWidgets.QTableView()
-        self.model = MedicamentoTableModel()
+        self.model = PaginatedMedicamentoTableModel(self)
         self.table.setModel(self.model)
         self.table.doubleClicked.connect(self._edit_current)
 
-        # Mejora visual
-        self.table.setAlternatingRowColors(True)
-        self.table.setStyleSheet("QTableView::item:focus { outline: none; }")
-        self.table.horizontalHeader().setStretchLastSection(True)
-        self.table.horizontalHeader().setSectionResizeMode(
-            QtWidgets.QHeaderView.Stretch
-        )
+        # Ajustes de columnas
+        header = self.table.horizontalHeader()
+        header.setStretchLastSection(True)
+        header.setSectionResizeMode(QtWidgets.QHeaderView.Stretch)
 
-        # ─── Botones ─────────────────────────────────────────────
-        self.btn_new = QtWidgets.QPushButton("➕ Nuevo")
-        self.btn_edit = QtWidgets.QPushButton("✏️ Editar")
-        self.btn_del = QtWidgets.QPushButton("🗑️ Eliminar")
-
-        self.btn_new.setCheckable(True)
-        self.btn_edit.setCheckable(True)
-        self.btn_del.setObjectName("btn_danger")
-
-        # Lógica de acción con resaltado
-        self.btn_new.clicked.connect(
-            lambda: self._handle_action(self.btn_new, self._add)
-        )
-        self.btn_edit.clicked.connect(
-            lambda: self._handle_action(self.btn_edit, self._edit_current)
-        )
-        self.btn_del.clicked.connect(self._delete_current)
-
-        # ─── Layout superior ─────────────────────────────────────
-        top = QtWidgets.QHBoxLayout()
-        top.addStretch()
-        top.addWidget(self.btn_new)
-        top.addWidget(self.btn_edit)
-        top.addWidget(self.btn_del)
-
-        # ─── Layout principal ────────────────────────────────────
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.addLayout(top)
-        layout.addWidget(self.table)
-
-        # ─── Estilos ─────────────────────────────────────────────
-        self.setStyleSheet(
+        # Selección transparente
+        self.table.setStyleSheet(
             """
-            QPushButton {
-                padding: 8px 24px;
-                min-width: 90px;
-                border-radius: 6px;
-                font-size: 14px;
-                background-color: #e0e0e0;
-            }
-
-            QPushButton:hover {
-                background-color: #d5d5d5;
-            }
-
-            QPushButton:pressed {
-                background-color: #c0c0c0;
-            }
-
-            QPushButton:checked {
-                background-color: #3f51b5;
-                border: 2px solid #303f9f;
-                font-weight: bold;
-                color: white;
-                min-width: 90px;
-            }
-
-            QPushButton#btn_danger {
-                background-color: #e53935;
-                color: white;
-            }
-
-            QPushButton#btn_danger:hover {
-                background-color: #c62828;
-            }
-
-            QPushButton#btn_danger:pressed {
-                background-color: #b71c1c;
-            }
-
-            QHeaderView::section {
-                background-color: #f5f5f5;
-                color: #333;
-                padding: 6px;
-                font-weight: bold;
-                border-bottom: 1px solid #ccc;
-            }
-
-            QTableView {
-                gridline-color: #eee;
-                selection-background-color: #c5cae9;
-                selection-color: #000;
-                alternate-background-color: #fafafa;
-            }
-
-            QTableView::item {
-                padding: 6px;
-            }
-
             QTableView::item:selected {
-                background-color: #c5cae9;
+                background: transparent;
                 color: black;
             }
         """
         )
 
-        self._refresh()
+        # ─── Controles de filtro ─────────────────────────────────
+        self.le_search = QtWidgets.QLineEdit(placeholderText="Nombre o código…")
+        self.le_search.returnPressed.connect(self._apply_filters)
 
-    # ─────────────────────────────────────────────────────────────
-    def _refresh(self):
-        self.model.set_rows(list(self.svc.list()))
-        self.table.resizeColumnsToContents()
+        self.cb_lab = QtWidgets.QComboBox()
+        self.cb_lab.addItem("Laboratorio (todos)")
+
+        self.cb_tipo = QtWidgets.QComboBox()
+        self.cb_tipo.addItem("Tipo (todos)")
+
+        self.btn_search = QtWidgets.QPushButton("🔍", clicked=self._apply_filters)
+
+        # ─── Paginador ─────────────────────────────────────────
+        self.btn_first = QtWidgets.QPushButton("⏮", clicked=lambda: self._goto(1))
+        self.btn_prev = QtWidgets.QPushButton(
+            "◀", clicked=lambda: self._goto(self._page - 1)
+        )
+        self.btn_next = QtWidgets.QPushButton(
+            "▶", clicked=lambda: self._goto(self._page + 1)
+        )
+        self.btn_last = QtWidgets.QPushButton(
+            "⏭", clicked=lambda: self._goto(self._total_pages)
+        )
+        for btn in (self.btn_first, self.btn_prev, self.btn_next, self.btn_last):
+            btn.setFixedWidth(40)
+        self.lbl_page = QtWidgets.QLabel()
+
+        # ─── Botones CRUD ───────────────────────────────────────
+        self.btn_new = QtWidgets.QPushButton("➕ Nuevo", clicked=self._add)
+        self.btn_edit = QtWidgets.QPushButton("✏️ Editar", clicked=self._edit_current)
+        self.btn_del = QtWidgets.QPushButton("🗑️ Eliminar", clicked=self._delete_current)
+        self.btn_del.setObjectName("btn_danger")
+
+        # ─── Estilos de botón Eliminar ─────────────────────────
+        self.setStyleSheet(
+            """
+            QPushButton#btn_danger {
+                background-color: #e53935;
+                color: white;
+                font-weight: bold;
+            }
+            QPushButton#btn_danger:hover {
+                background-color: #c62828;
+            }
+            QPushButton#btn_danger:pressed {
+                background-color: #b71c1c;
+            }
+        """
+        )
+
+        # ─── Layouts ───────────────────────────────────────────
+        top_bar = QtWidgets.QHBoxLayout()
+        top_bar.addWidget(self.le_search)
+        top_bar.addWidget(self.cb_lab)
+        top_bar.addWidget(self.cb_tipo)
+        top_bar.addWidget(self.btn_search)
+        top_bar.addStretch()
+        top_bar.addWidget(self.btn_new)
+        top_bar.addWidget(self.btn_edit)
+        top_bar.addWidget(self.btn_del)
+
+        pager = QtWidgets.QHBoxLayout()
+        pager.addWidget(self.btn_first)
+        pager.addWidget(self.btn_prev)
+        pager.addWidget(self.lbl_page)
+        pager.addWidget(self.btn_next)
+        pager.addWidget(self.btn_last)
+        pager.addStretch()
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.addLayout(top_bar)
+        layout.addWidget(self.table)
+        layout.addLayout(pager)
+
+        # ─── Inicializar datos ─────────────────────────────────
+        self._load_combo_data()
+        self._load_initial()
+
+    def _load_initial(self):
+        meds = self.svc.latest_100()
+        self._total_pages = (len(meds) + _PER_PAGE - 1) // _PER_PAGE or 1
+        self._page = 1
+        self.model.set_rows(meds[:_PER_PAGE])
+        self._update_page_label()
+
+    def _apply_filters(self):
+        filters: dict[str, object] = {}
+        txt = self.le_search.text().strip()
+        if txt:
+            filters["nombre_codigo"] = txt
+
+        lab = self.cb_lab.currentText()
+        if lab != "Laboratorio (todos)":
+            filters["laboratorio"] = lab
+
+        typ = self.cb_tipo.currentText()
+        if typ != "Tipo (todos)":
+            filters["tipo"] = typ
+
+        self._filters = filters or None
+        self._goto(1)
+
+    def _goto(self, page: int):
+        if page < 1:
+            page = 1
+        items, _, total_pages = self.svc.list_paginated(
+            page=page, per_page=_PER_PAGE, filters=self._filters
+        )
+        self._page = page
+        self._total_pages = max(total_pages, 1)
+        self.model.set_rows(items)
+        self._update_page_label()
+
+    def _update_page_label(self):
+        self.lbl_page.setText(f"Página {self._page} / {self._total_pages}")
+        self.btn_first.setEnabled(self._page > 1)
+        self.btn_prev.setEnabled(self._page > 1)
+        self.btn_next.setEnabled(self._page < self._total_pages)
+        self.btn_last.setEnabled(self._page < self._total_pages)
+
+    def _load_combo_data(self):
+        latest = self.svc.latest_100()
+        labs = sorted({m.laboratorio for m in latest if m.laboratorio})
+        tipos = sorted({m.tipo for m in latest if m.tipo})
+        self.cb_lab.addItems(labs)
+        self.cb_tipo.addItems(tipos)
 
     def _current_med(self):
         idx = self.table.currentIndex()
-        if not idx.isValid():
-            return None
-        return self.model.item(idx.row())
+        return self.model.item(idx.row()) if idx.isValid() else None
 
-    # ─── CRUD actions ─────────────────────────────────────────────
     def _add(self):
         dlg = MedicamentoForm(self)
-        if dlg.exec() == QtWidgets.QDialog.Accepted:
-            self.svc.add(dlg.get_data())
-            self._refresh()
+        if dlg.exec() != QtWidgets.QDialog.Accepted:
+            return
+
+        med = dlg.get_data()
+        med_saved = self.svc.add(med)
+
+        stock_ini = dlg.get_stock_inicial()
+        if stock_ini > 0:
+            lote_repo = LoteRepo(SessionLocal())
+            mov_repo = MovimientoRepo(SessionLocal())
+            inv = InventoryService(lote_repo, mov_repo, FIFOSelector(lote_repo))
+            current = get_current_user()
+            usuario_id = current.id if current else 1
+            inv.entrada_nueva(
+                codigo=str(uuid.uuid4())[:8],
+                medicamento_id=med_saved.id,
+                fecha_venc=date.today().replace(year=date.today().year + 2),
+                cantidad=stock_ini,
+                motivo="Ingreso inicial",
+                usuario_id=usuario_id,
+            )
+
+        self._apply_filters()
+        Toast.show_("Medicamento creado", self)
 
     def _edit_current(self):
         med = self._current_med()
@@ -148,28 +217,19 @@ class CatalogView(QtWidgets.QWidget):
             return
         dlg = MedicamentoForm(self, med)
         if dlg.exec() == QtWidgets.QDialog.Accepted:
-            self.svc.update(med.id, dlg.get_data().model_dump(exclude={"id"}))
-            self._refresh()
+            data = dlg.get_data().model_dump(exclude={"id"}, mode="python")
+            self.svc.update(med.id, data)
+            self._apply_filters()
+            Toast.show_("Medicamento actualizado", self)
 
     def _delete_current(self):
         med = self._current_med()
         if not med:
             return
         if (
-            QtWidgets.QMessageBox.question(
-                self,
-                "Eliminar",
-                f"¿Eliminar {med.nombre}?",
-            )
+            QtWidgets.QMessageBox.question(self, "Eliminar", f"¿Eliminar {med.nombre}?")
             == QtWidgets.QMessageBox.Yes
         ):
             self.svc.delete(med.id)
-            self._refresh()
-
-    # ─── Manejo visual de botones activos ─────────────────────────
-    def _handle_action(self, button, action_func):
-        self.btn_new.setChecked(False)
-        self.btn_edit.setChecked(False)
-        button.setChecked(True)
-        action_func()
-        button.setChecked(False)
+            self._apply_filters()
+            Toast.show_("Medicamento eliminado", self)

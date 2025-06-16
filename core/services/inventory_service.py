@@ -1,11 +1,19 @@
+from __future__ import annotations
+
 from datetime import date
-from typing import Iterable
+from typing import Iterable, List
 
 from pydantic import PositiveInt
 
+from core.models.enums import \
+    TipoMovimiento  # ← TipoMovimiento está en enums.py
 from core.models.lote import Lote
-from core.models.movimiento import Movimiento, TipoMovimiento
+from core.models.movimiento import Movimiento
 from core.ports.repository_port import RepositoryPort
+
+# ---------------------------------------------------------------------------
+# FIFO utility
+# ---------------------------------------------------------------------------
 
 
 class FIFOSelector:
@@ -31,7 +39,18 @@ class FIFOSelector:
         )
 
 
+# ---------------------------------------------------------------------------
+# Inventory use-case
+# ---------------------------------------------------------------------------
+
+
 class InventoryService:
+    """
+    Casos de uso de inventario.
+
+    *Adaptado* para el nuevo modelo `Movimiento` que exige `usuario_id`.
+    """
+
     def __init__(
         self,
         lote_repo: RepositoryPort[Lote],
@@ -42,13 +61,25 @@ class InventoryService:
         self._mov_repo = mov_repo
         self._fifo = fifo_selector
 
-    # Entradas
-    def entrada(self, lote: Lote, cantidad: PositiveInt, motivo: str) -> Movimiento:
+    # ---------------------- ENTRADAS ----------------------
+
+    def entrada(
+        self,
+        lote: Lote,
+        cantidad: PositiveInt,
+        motivo: str,
+        usuario_id: PositiveInt,
+    ) -> Movimiento:
+        """
+        Registrar entrada de stock a un lote existente.
+        """
         lote.stock += cantidad
         self._lote_repo.add(lote)
+
         return self._mov_repo.add(
             Movimiento(
                 lote_id=lote.id,
+                usuario_id=usuario_id,
                 tipo=TipoMovimiento.ENTRADA,
                 cantidad=cantidad,
                 motivo=motivo,
@@ -62,8 +93,11 @@ class InventoryService:
         fecha_venc: date,
         cantidad: PositiveInt,
         motivo: str,
+        usuario_id: PositiveInt,
     ) -> Movimiento:
-        # lote nace con la cantidad real
+        """
+        Crear un lote nuevo e ingresar stock.
+        """
         lote = Lote(
             codigo=codigo,
             medicamento_id=medicamento_id,
@@ -72,20 +106,28 @@ class InventoryService:
         )
         lote = self._lote_repo.add(lote)  # INSERT
 
-        # registramos el movimiento de entrada
         return self._mov_repo.add(
             Movimiento(
                 lote_id=lote.id,
+                usuario_id=usuario_id,
                 tipo=TipoMovimiento.ENTRADA,
                 cantidad=cantidad,
                 motivo=motivo,
             )
         )
 
-    # Salidas con FIFO
+    # ---------------------- SALIDAS (FIFO) ----------------------
+
     def salida(
-        self, medicamento_id: int, cantidad: PositiveInt, motivo: str
-    ) -> list[Movimiento]:
+        self,
+        medicamento_id: int,
+        cantidad: PositiveInt,
+        motivo: str,
+        usuario_id: PositiveInt,
+    ) -> List[Movimiento]:
+        """
+        Descontar stock aplicando FIFO.
+        """
         movimientos: list[Movimiento] = []
         restante = cantidad
 
@@ -102,6 +144,7 @@ class InventoryService:
                 self._mov_repo.add(
                     Movimiento(
                         lote_id=lote.id,
+                        usuario_id=usuario_id,
                         tipo=TipoMovimiento.SALIDA,
                         cantidad=salida_qty,
                         motivo=motivo,
@@ -112,8 +155,11 @@ class InventoryService:
 
         return movimientos
 
+    # ---------------------- UTILIDADES ----------------------
+
     def lotes_con_stock(self, medicamento_id: int) -> Iterable[Lote]:
         return self._fifo.lotes_con_stock(medicamento_id)
 
+    @staticmethod
     def dias_para_vencer(lote: Lote) -> int:
         return (lote.fecha_vencimiento - date.today()).days

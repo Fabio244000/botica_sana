@@ -1,8 +1,8 @@
-"""baseline schema
+"""initial schema
 
-Revision ID: 38cc0ca07ee8
+Revision ID: f3621d8cde35
 Revises: 
-Create Date: 2025-06-13 16:02:12.401049
+Create Date: 2025-06-16 18:09:59.623804
 
 """
 
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "38cc0ca07ee8"
+revision: str = "f3621d8cde35"
 down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -25,6 +25,8 @@ def upgrade() -> None:
         "medicamentos",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("nombre", sa.String(length=120), nullable=False),
+        sa.Column("codigo", sa.String(length=50), nullable=False),
+        sa.Column("tipo", sa.String(length=50), nullable=False),
         sa.Column("principio_activo", sa.String(length=120), nullable=False),
         sa.Column("laboratorio", sa.String(length=120), nullable=True),
         sa.Column(
@@ -34,21 +36,40 @@ def upgrade() -> None:
             ),
             nullable=False,
         ),
+        sa.Column("concentracion", sa.String(length=50), nullable=True),
+        sa.Column("forma_farmaceutica", sa.String(length=50), nullable=True),
+        sa.Column("via_administracion", sa.String(length=50), nullable=True),
+        sa.Column("indicaciones", sa.String(length=255), nullable=True),
+        sa.Column("contraindicaciones", sa.String(length=255), nullable=True),
+        sa.Column("condiciones_almacenamiento", sa.String(length=255), nullable=True),
+        sa.Column("imagen_url", sa.String(length=255), nullable=True),
         sa.Column("precio_venta", sa.Float(), nullable=False),
         sa.Column("creado_en", sa.DateTime(), nullable=False),
         sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("codigo"),
     )
     op.create_table(
         "usuarios",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("username", sa.String(length=50), nullable=False),
+        sa.Column("nombre_completo", sa.String(length=120), nullable=False),
+        sa.Column("dni", sa.String(length=12), nullable=True),
         sa.Column("password_hash", sa.String(length=128), nullable=False),
+        sa.Column("email", sa.String(length=120), nullable=False),
+        sa.Column("celular", sa.String(length=15), nullable=False),
+        sa.Column("direccion", sa.String(length=255), nullable=False),
         sa.Column(
-            "rol", sa.Enum("ADMIN", "CAJERO", "AUDITOR", name="rol"), nullable=False
+            "rol",
+            sa.Enum(
+                "ADMIN", "CAJERO", "AUDITOR", "ALMACENERO", "FARMACEUTICO", name="rol"
+            ),
+            nullable=False,
         ),
         sa.Column("activo", sa.Boolean(), nullable=False),
         sa.Column("creado_en", sa.DateTime(), nullable=False),
+        sa.CheckConstraint("username GLOB '[A-Za-z0-9]*'", name="chk_username_alnum"),
         sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("dni"),
         sa.UniqueConstraint("username"),
     )
     op.create_table(
@@ -58,6 +79,12 @@ def upgrade() -> None:
         sa.Column("medicamento_id", sa.Integer(), nullable=False),
         sa.Column("fecha_vencimiento", sa.Date(), nullable=False),
         sa.Column("stock", sa.Integer(), nullable=False),
+        sa.Column(
+            "creado_en",
+            sa.DateTime(),
+            server_default=sa.text("(CURRENT_TIMESTAMP)"),
+            nullable=False,
+        ),
         sa.ForeignKeyConstraint(
             ["medicamento_id"], ["medicamentos.id"], ondelete="CASCADE"
         ),
@@ -68,6 +95,7 @@ def upgrade() -> None:
         "movimientos",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("lote_id", sa.Integer(), nullable=False),
+        sa.Column("usuario_id", sa.Integer(), nullable=False),
         sa.Column(
             "tipo", sa.Enum("ENTRADA", "SALIDA", name="tipomovimiento"), nullable=False
         ),
@@ -75,6 +103,10 @@ def upgrade() -> None:
         sa.Column("motivo", sa.String(length=120), nullable=False),
         sa.Column("creado_en", sa.DateTime(), nullable=False),
         sa.ForeignKeyConstraint(["lote_id"], ["lotes.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(
+            ["usuario_id"],
+            ["usuarios.id"],
+        ),
         sa.PrimaryKeyConstraint("id"),
     )
     # ### end Alembic commands ###

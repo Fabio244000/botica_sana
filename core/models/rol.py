@@ -5,3 +5,5 @@ class Rol(str, Enum):
     ADMIN = "admin"
     CAJERO = "cajero"
     AUDITOR = "auditor"
+    ALMACENERO = "almacenero"
+    FARMACEUTICO = "farmaceutico"

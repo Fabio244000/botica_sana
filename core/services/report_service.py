@@ -3,7 +3,8 @@ from datetime import date
 from pathlib import Path
 from typing import Iterable, Literal
 
-from core.models.movimiento import Movimiento, TipoMovimiento
+from core.models.enums import TipoMovimiento
+from core.models.movimiento import Movimiento
 from core.ports.repository_port import RepositoryPort
 
 _Tipo = Literal["entradas", "salidas", "todos"]

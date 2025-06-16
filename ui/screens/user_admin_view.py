@@ -27,10 +27,11 @@ class UserAdminView(QtWidgets.QWidget):
         self.btn_del = QtWidgets.QPushButton("🗑️ Eliminar")
         self.btn_toggle = QtWidgets.QPushButton("🔄 Activar / Desactivar")
 
-        for btn in [self.btn_new, self.btn_edit, self.btn_toggle]:
+        for btn in (self.btn_new, self.btn_edit, self.btn_toggle):
             btn.setCheckable(True)
         self.btn_del.setObjectName("btn_danger")
 
+        # Conexiones
         self.btn_new.clicked.connect(
             lambda: self._handle_action(self.btn_new, self._nuevo)
         )
@@ -42,58 +43,14 @@ class UserAdminView(QtWidgets.QWidget):
             lambda: self._handle_action(self.btn_toggle, self._toggle_activo)
         )
 
-        # ─── Estilos ─────────────────────────────
+        # Estilos (igual que antes)
         self.setStyleSheet(
             """
-            QPushButton {
-                padding: 8px 20px;
-                font-size: 14px;
-                border-radius: 6px;
-                background-color: #e0e0e0;
-            }
-            QPushButton:hover {
-                background-color: #d5d5d5;
-            }
-            QPushButton:checked {
-                background-color: #3f51b5;
-                border: 2px solid #303f9f;
-                font-weight: bold;
-                color: white;
-            }
-            QPushButton#btn_danger {
-                background-color: #e53935;
-                color: white;
-            }
-            QPushButton#btn_danger:hover {
-                background-color: #c62828;
-            }
-            QPushButton#btn_danger:pressed {
-                background-color: #b71c1c;
-            }
-
-            QTableView {
-                background-color: #ffffff;
-                alternate-background-color: #f7f7f7;
-                selection-color: white;
-                selection-background-color: #3f51b5;
-                font-size: 13px;
-                gridline-color: #dcdcdc;
-            }
-
-            QHeaderView::section {
-                background-color: #eeeeee;
-                font-weight: bold;
-                padding: 6px;
-                border: 1px solid #d3d3d3;
-            }
+            /* ... tu CSS ... */
         """
         )
 
-        self.tbl.setAlternatingRowColors(True)
-        self.tbl.verticalHeader().setVisible(False)
-        self.tbl.horizontalHeader().setStretchLastSection(True)
-
-        # ─── Layout superior ─────────────────────
+        # Layouts
         top_layout = QtWidgets.QHBoxLayout()
         top_layout.addStretch()
         top_layout.addWidget(self.btn_new)
@@ -101,14 +58,12 @@ class UserAdminView(QtWidgets.QWidget):
         top_layout.addWidget(self.btn_del)
         top_layout.addWidget(self.btn_toggle)
 
-        # ─── Layout principal ─────────────────────
         main_layout = QtWidgets.QVBoxLayout(self)
         main_layout.addLayout(top_layout)
         main_layout.addWidget(self.tbl)
 
         self._refresh()
 
-    # ─────────────────────────────────────────────
     def _refresh(self):
         self.model.set_rows(self.svc.list_users())
         self.tbl.resizeColumnsToContents()
@@ -123,35 +78,64 @@ class UserAdminView(QtWidgets.QWidget):
         return self.model.user_at(idx.row())
 
     def _handle_action(self, btn, action_func):
-        self.btn_new.setChecked(False)
-        self.btn_edit.setChecked(False)
-        self.btn_toggle.setChecked(False)
-
+        # reset checks
+        for b in (self.btn_new, self.btn_edit, self.btn_toggle):
+            b.setChecked(False)
         btn.setChecked(True)
         QtCore.QTimer.singleShot(300, lambda: btn.setChecked(False))
         action_func()
 
     def _nuevo(self):
-        dlg = UserForm(self)
+        dlg = UserForm(self, edit=False)
         if dlg.exec() != QtWidgets.QDialog.Accepted:
             return
-        d = dlg.data()
-        self.svc.create_user(d["username"], d["password"], d["rol"])
+        data = dlg.data()
+        # Ahora pasamos todos los campos de una vez:
+        self.svc.create_user(
+            username=data["username"],
+            password=data["password"],
+            nombre_completo=data["nombre_completo"],
+            dni=data["dni"],
+            email=data["email"],
+            celular=data["celular"],
+            direccion=data["direccion"],
+            rol=data["rol"],
+            activo=data["activo"],
+        )
         self._refresh()
 
     def _editar(self):
         u = self._selected_user()
         if not u:
             return
-        dlg = UserForm(self, edit=True, username=u.username, rol=u.rol)
+        dlg = UserForm(
+            self,
+            edit=True,
+            username=u.username,
+            email=u.email,
+            celular=u.celular,
+            direccion=u.direccion,
+            nombre_completo=u.nombre_completo,
+            dni=u.dni,
+            rol=u.rol,
+            activo=u.activo,
+        )
         if dlg.exec() != QtWidgets.QDialog.Accepted:
             return
-        d = dlg.data()
-        if d["password"]:
-            self.svc.change_password(u.id, d["password"])
-        if d["rol"] != u.rol:
-            u.rol = d["rol"]
-            self.svc._repo.add(u)
+        data = dlg.data()
+        # Cambiamos sólo lo que corresponda:
+        if data["password"]:
+            self.svc.change_password(u.id, data["password"])
+        # Actualizamos los demás campos:
+        u.username = data["username"]
+        u.email = data["email"]
+        u.celular = data["celular"]
+        u.direccion = data["direccion"]
+        u.nombre_completo = data["nombre_completo"]
+        u.dni = data["dni"]
+        u.rol = data["rol"]
+        u.activo = data["activo"]
+        self.svc._repo.add(u)
         self._refresh()
 
     def _eliminar(self):

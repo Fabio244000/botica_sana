@@ -6,7 +6,7 @@ from PySide6.QtCore import QDate
 from core.services.report_service import ReportService
 from infrastructure.db import SessionLocal
 from infrastructure.repos import MovimientoRepo
-from ui.widgets.alert_table import AlertTableModel
+from ui.widgets.report_table_model import ReportTableModel
 
 
 class ReportView(QtWidgets.QWidget):
@@ -17,126 +17,179 @@ class ReportView(QtWidgets.QWidget):
         # ─── Estilos ───────────────────────────────
         self.setStyleSheet(
             """
-            QPushButton {
-                padding: 8px 20px;
-                font-size: 14px;
-                border-radius: 6px;
-                background-color: #e0e0e0;
-            }
-            QPushButton:hover {
-                background-color: #d5d5d5;
-            }
-            QPushButton:checked {
-                background-color: #3f51b5;
-                border: 2px solid #303f9f;
-                font-weight: bold;
-                color: white;
-            }
-
-            QTableView {
-                background-color: #ffffff;
-                alternate-background-color: #f7f7f7;
-                selection-color: white;
-                selection-background-color: #3f51b5;
-                font-size: 13px;
-                gridline-color: #dcdcdc;
-            }
-
-            QHeaderView::section {
-                background-color: #eeeeee;
-                font-weight: bold;
-                padding: 6px;
-                border: 1px solid #d3d3d3;
-            }
+            QPushButton { padding: 6px 12px; font-size: 13px; border-radius: 4px; background-color: #e0e0e0; }
+            QPushButton:hover { background-color: #d5d5d5; }
+            QPushButton:checked { background-color: #3f51b5; color: white; }
+            QTableView { font-size: 13px; }
+            QHeaderView::section { font-weight: bold; padding: 4px; }
         """
         )
 
         # ─── Filtros ────────────────────────────────
-        self.dt_desde = QtWidgets.QDateEdit()
-        self.dt_hasta = QtWidgets.QDateEdit()
-        self.dt_desde.setCalendarPopup(True)
-        self.dt_hasta.setCalendarPopup(True)
+        self.dt_desde = QtWidgets.QDateEdit(calendarPopup=True)
+        self.dt_hasta = QtWidgets.QDateEdit(calendarPopup=True)
         self.dt_desde.setDate(QDate.currentDate().addMonths(-1))
         self.dt_hasta.setDate(QDate.currentDate())
 
         self.cb_tipo = QtWidgets.QComboBox()
         self.cb_tipo.addItems(["todos", "entradas", "salidas"])
 
+        # rangos rápidos
+        self.btn_dia = QtWidgets.QPushButton("Último día")
+        self.btn_semana = QtWidgets.QPushButton("Última semana")
+        self.btn_mes = QtWidgets.QPushButton("Último mes")
+
+        # acciones
         self.btn_filtrar = QtWidgets.QPushButton("Filtrar")
-        self.btn_csv = QtWidgets.QPushButton("Exportar CSV")
-        self.btn_pdf = QtWidgets.QPushButton("Exportar PDF")
+        self.btn_export_csv = QtWidgets.QPushButton("Exportar CSV")
+        self.btn_export_pdf = QtWidgets.QPushButton("Exportar PDF")
 
-        self.btn_filtrar.setCheckable(True)
-        self.btn_csv.setCheckable(True)
-        self.btn_pdf.setCheckable(True)
+        # paginación
+        self.btn_prev = QtWidgets.QPushButton("◀")
+        self.btn_next = QtWidgets.QPushButton("▶")
+        self.lbl_page = QtWidgets.QLabel()
 
-        self.btn_filtrar.clicked.connect(
-            lambda: self._handle_action(self.btn_filtrar, self._aplicar_filtros)
-        )
-        self.btn_csv.clicked.connect(
-            lambda: self._handle_action(self.btn_csv, lambda: self._exportar("csv"))
-        )
-        self.btn_pdf.clicked.connect(
-            lambda: self._handle_action(self.btn_pdf, lambda: self._exportar("pdf"))
-        )
+        for btn in (
+            self.btn_dia,
+            self.btn_semana,
+            self.btn_mes,
+            self.btn_filtrar,
+            self.btn_export_csv,
+            self.btn_export_pdf,
+            self.btn_prev,
+            self.btn_next,
+        ):
+            btn.setCheckable(True)
+        self.btn_prev.setCheckable(False)
+        self.btn_next.setCheckable(False)
+        self.btn_prev.setFixedWidth(30)
+        self.btn_next.setFixedWidth(30)
 
-        # ─── Layout de filtros ──────────────────────
-        filtro_layout = QtWidgets.QHBoxLayout()
-        filtro_layout.addWidget(QtWidgets.QLabel("Desde"))
-        filtro_layout.addWidget(self.dt_desde)
-        filtro_layout.addWidget(QtWidgets.QLabel("Hasta"))
-        filtro_layout.addWidget(self.dt_hasta)
-        filtro_layout.addWidget(QtWidgets.QLabel("Tipo"))
-        filtro_layout.addWidget(self.cb_tipo)
-        filtro_layout.addWidget(self.btn_filtrar)
-        filtro_layout.addStretch()
-        filtro_layout.addWidget(self.btn_csv)
-        filtro_layout.addWidget(self.btn_pdf)
+        # conexiones
+        self.btn_dia.clicked.connect(lambda: self._range_and_refresh("dia"))
+        self.btn_semana.clicked.connect(lambda: self._range_and_refresh("semana"))
+        self.btn_mes.clicked.connect(lambda: self._range_and_refresh("mes"))
+        self.btn_filtrar.clicked.connect(self._aplicar_filtros)
+        self.btn_export_csv.clicked.connect(lambda: self._exportar("csv"))
+        self.btn_export_pdf.clicked.connect(lambda: self._exportar("pdf"))
+        self.btn_prev.clicked.connect(lambda: self._change_page(-1))
+        self.btn_next.clicked.connect(lambda: self._change_page(1))
 
-        # ─── Tabla de resultados ─────────────────────
+        # ─── Layout filtros ────────────────────────
+        top = QtWidgets.QHBoxLayout()
+        top.addWidget(self.btn_dia)
+        top.addWidget(self.btn_semana)
+        top.addWidget(self.btn_mes)
+        top.addSpacing(20)
+        top.addWidget(QtWidgets.QLabel("Desde"))
+        top.addWidget(self.dt_desde)
+        top.addWidget(QtWidgets.QLabel("Hasta"))
+        top.addWidget(self.dt_hasta)
+        top.addWidget(QtWidgets.QLabel("Tipo"))
+        top.addWidget(self.cb_tipo)
+        top.addWidget(self.btn_filtrar)
+        top.addStretch()
+        top.addWidget(self.btn_export_csv)
+        top.addWidget(self.btn_export_pdf)
+
+        # ─── Tabla de resultados ────────────────────
         self.tbl = QtWidgets.QTableView()
-        self.model = AlertTableModel([])
-        self.tbl.setModel(self.model)
-        self.tbl.setAlternatingRowColors(True)
+        # self.tbl.setAlternatingRowColors(True)
         self.tbl.verticalHeader().setVisible(False)
-        self.tbl.horizontalHeader().setStretchLastSection(True)
 
-        # ─── Layout principal ────────────────────────
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.addLayout(filtro_layout)
-        layout.addWidget(self.tbl)
+        header = self.tbl.horizontalHeader()
+        header.setSectionResizeMode(0, QtWidgets.QHeaderView.Stretch)  # Fecha/hora
+        header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(3, QtWidgets.QHeaderView.Stretch)  # Medicamento
+        header.setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(5, QtWidgets.QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(6, QtWidgets.QHeaderView.Stretch)
 
-        self._aplicar_filtros()
+        # ─── Layout paginador ──────────────────────
+        pager = QtWidgets.QHBoxLayout()
+        pager.addStretch()
+        pager.addWidget(self.btn_prev)
+        pager.addWidget(self.lbl_page)
+        pager.addWidget(self.btn_next)
+        pager.addStretch()
 
-    def _handle_action(self, btn, action):
-        # Reiniciar estados
-        self.btn_filtrar.setChecked(False)
-        self.btn_csv.setChecked(False)
-        self.btn_pdf.setChecked(False)
+        # ─── Layout principal ───────────────────────
+        v = QtWidgets.QVBoxLayout(self)
+        v.addLayout(top)
+        v.addWidget(self.tbl)
+        v.addLayout(pager)
 
-        btn.setChecked(True)
-        QtCore.QTimer.singleShot(300, lambda: btn.setChecked(False))
-        action()
+        # inicializar paginación
+        self._per_page = 20
+        self._page = 1
+        self._total = 0
 
-    def _movs_filtrados(self):
-        f_desde = self.dt_desde.date().toPython()
-        f_hasta = self.dt_hasta.date().toPython()
-        tipo = self.cb_tipo.currentText()
-        return list(self.svc.movimientos(f_desde, f_hasta, tipo))
+        self._apply_and_paginate()
+
+    def _range_and_refresh(self, period: str):
+        hoy = QDate.currentDate()
+        if period == "dia":
+            self.dt_desde.setDate(hoy.addDays(-1))
+        elif period == "semana":
+            self.dt_desde.setDate(hoy.addDays(-7))
+        else:
+            self.dt_desde.setDate(hoy.addMonths(-1))
+        self.dt_hasta.setDate(hoy)
+        self._apply_and_paginate()
 
     def _aplicar_filtros(self):
-        self.model.set_rows(self._movs_filtrados())
-        self.tbl.resizeColumnsToContents()
+        # validación de fechas
+        if self.dt_desde.date() > self.dt_hasta.date():
+            QtWidgets.QMessageBox.warning(
+                self, "Error", "Desde no puede ser mayor que Hasta."
+            )
+            return
+        self._page = 1
+        self._apply_and_paginate()
 
-    def _exportar(self, formato: str):
-        movs = self._movs_filtrados()
+    def _apply_and_paginate(self):
+        movimientos = self.svc.movimientos(
+            self.dt_desde.date().toPython(),
+            self.dt_hasta.date().toPython(),
+            self.cb_tipo.currentText(),
+        )
+        movs = list(movimientos)
+        self._total = len(movs)
+        self._total_pages = max(1, (self._total + self._per_page - 1) // self._per_page)
+
+        start = (self._page - 1) * self._per_page
+        end = start + self._per_page
+        page_slice = movs[start:end]
+
+        # actualizar modelo
+        self.model = ReportTableModel(page_slice)
+        self.tbl.setModel(self.model)
+
+        # actualizar paginador
+        self.lbl_page.setText(f"Página {self._page} / {self._total_pages}")
+        self.btn_prev.setEnabled(self._page > 1)
+        self.btn_next.setEnabled(self._page < self._total_pages)
+
+    def _change_page(self, delta: int):
+        self._page = min(max(1, self._page + delta), self._total_pages)
+        self._apply_and_paginate()
+
+    def _exportar(self, fmt: str):
+        movs = list(
+            self.svc.movimientos(
+                self.dt_desde.date().toPython(),
+                self.dt_hasta.date().toPython(),
+                self.cb_tipo.currentText(),
+            )
+        )
         if not movs:
             QtWidgets.QMessageBox.information(self, "Reportes", "Sin datos.")
             return
-        filtro = "CSV (*.csv)" if formato == "csv" else "PDF (*.pdf)"
+        filtro = "CSV (*.csv)" if fmt == "csv" else "PDF (*.pdf)"
         path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Guardar", "", filtro)
         if not path:
             return
-        fn = self.svc.to_csv if formato == "csv" else self.svc.to_pdf
+        fn = self.svc.to_csv if fmt == "csv" else self.svc.to_pdf
         fn(Path(path), movs)
         QtWidgets.QMessageBox.information(self, "Reportes", "Archivo generado.")

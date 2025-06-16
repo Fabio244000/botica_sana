@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Optional
 
 from pydantic import BaseModel, Field, PositiveInt
 
@@ -6,10 +7,11 @@ from .enums import TipoMovimiento
 
 
 class Movimiento(BaseModel):
-    """Entrada o salida de inventario."""
+    """Registro de entrada o salida de inventario."""
 
-    id: int | None = None
+    id: Optional[int] = None
     lote_id: PositiveInt
+    usuario_id: PositiveInt
     tipo: TipoMovimiento
     cantidad: PositiveInt
     motivo: str = Field(max_length=120)

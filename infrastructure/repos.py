@@ -1,5 +1,8 @@
-from typing import Iterable
+from typing import Iterable, List, Mapping, Tuple
 
+from pydantic import SecretStr
+from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from core.models.lote import Lote
@@ -12,12 +15,11 @@ from infrastructure.models import (LoteSQL, MedicamentoSQL, MovimientoSQL,
                                    UsuarioSQL)
 
 
-# ——— Helper ————————————————————————————————————————————————
 def as_dict(obj):
+    """Convierte un modelo SQLAlchemy a dict plano."""
     return {c.name: getattr(obj, c.name) for c in obj.__table__.columns}
 
 
-# ——— Medicamento repo ——————————————————————————————————————
 class MovimientoRepo(RepositoryPort[Movimiento]):
     def __init__(self, db: Session | None = None):
         self._db = db or SessionLocal()
@@ -34,37 +36,43 @@ class MovimientoRepo(RepositoryPort[Movimiento]):
         return Movimiento(**as_dict(sql)) if sql else None
 
     def list(self) -> Iterable[Movimiento]:
-        return (Movimiento(**as_dict(m)) for m in self._db.query(MovimientoSQL).all())
+        rows = (
+            self._db.query(MovimientoSQL).order_by(MovimientoSQL.creado_en.desc()).all()
+        )
+        return (Movimiento(**as_dict(m)) for m in rows)
 
     def delete(self, entity_id: int) -> None:
-        obj = self._db.get(MedicamentoSQL, entity_id)
+        obj = self._db.get(MovimientoSQL, entity_id)
         if obj:
             self._db.delete(obj)
             self._db.commit()
 
+    def list_recent(self, limit: int = 100) -> Iterable[Movimiento]:
+        rows = (
+            self._db.query(MovimientoSQL)
+            .order_by(MovimientoSQL.creado_en.desc())
+            .limit(limit)
+            .all()
+        )
+        return (Movimiento(**as_dict(m)) for m in rows)
 
-# ——— Lote repo ————————————————————————————————————————————
+
 class LoteRepo(RepositoryPort[Lote]):
     def __init__(self, db: Session | None = None):
         self._db = db or SessionLocal()
 
     def add(self, entity: Lote) -> Lote:
-        """
-        • Si entity.id es None  → INSERT
-        • Si entity.id existe   → UPDATE
-        """
-        if entity.id is None:  # ---------- INSERT ----------
+        if entity.id is None:
             sql = LoteSQL(**entity.model_dump(exclude={"id"}))
             self._db.add(sql)
-        else:  # ---------- UPDATE ----------
+        else:
             sql = self._db.get(LoteSQL, entity.id)
-            if not sql:  # id inexistente → insert
+            if not sql:
                 sql = LoteSQL(**entity.model_dump(exclude={"id"}))
                 self._db.add(sql)
-            else:  # copiar campos que cambian
+            else:
                 for k, v in entity.model_dump(exclude={"id"}).items():
                     setattr(sql, k, v)
-
         self._db.commit()
         self._db.refresh(sql)
         return Lote(**as_dict(sql))
@@ -88,28 +96,45 @@ class UsuarioRepo(RepositoryPort[Usuario]):
         self._db = db or SessionLocal()
 
     def add(self, entity: Usuario) -> Usuario:
-        """Insertar nuevo o actualizar existente."""
-        if entity.id is None:  # ---------- INSERT ----------
-            sql = UsuarioSQL(**entity.model_dump(exclude={"id"}))
+        # Preparamos dict excluyendo id y desenrollamos SecretStr
+        data = entity.model_dump(exclude={"id"})
+        for k, v in data.items():
+            if isinstance(v, SecretStr):
+                data[k] = v.get_secret_value()
+
+        if entity.id is None:
+            sql = UsuarioSQL(**data)
             self._db.add(sql)
-        else:  # ---------- UPDATE ----------
+        else:
             sql = self._db.get(UsuarioSQL, entity.id)
-            if not sql:  # id no existe → insertar
-                sql = UsuarioSQL(**entity.model_dump(exclude={"id"}))
+            if not sql:
+                sql = UsuarioSQL(**data)
                 self._db.add(sql)
-            else:  # copiar campos modificados
-                for k, v in entity.model_dump(exclude={"id"}).items():
+            else:
+                for k, v in data.items():
                     setattr(sql, k, v)
+
         self._db.commit()
         self._db.refresh(sql)
-        return Usuario(**as_dict(sql))
+
+        # Mapear password_hash de SQL a SecretStr password
+        raw = as_dict(sql)
+        raw["password"] = SecretStr(raw.pop("password_hash"))
+        return Usuario(**raw)
 
     def get(self, entity_id: int) -> Usuario | None:
         sql = self._db.get(UsuarioSQL, entity_id)
-        return Usuario(**as_dict(sql)) if sql else None
+        if not sql:
+            return None
+        raw = as_dict(sql)
+        raw["password"] = SecretStr(raw.pop("password_hash"))
+        return Usuario(**raw)
 
     def list(self) -> Iterable[Usuario]:
-        return (Usuario(**as_dict(u)) for u in self._db.query(UsuarioSQL).all())
+        for u in self._db.query(UsuarioSQL).all():
+            raw = as_dict(u)
+            raw["password"] = SecretStr(raw.pop("password_hash"))
+            yield Usuario(**raw)
 
     def delete(self, entity_id: int) -> None:
         obj = self._db.get(UsuarioSQL, entity_id)
@@ -123,9 +148,23 @@ class MedicamentoRepo(RepositoryPort[Medicamento]):
         self._db = db or SessionLocal()
 
     def add(self, entity: Medicamento) -> Medicamento:
-        sql = MedicamentoSQL(**entity.model_dump(exclude={"id"}))
-        self._db.add(sql)
-        self._db.commit()
+        data = entity.model_dump(exclude={"id"})
+        if entity.id is None:
+            sql = MedicamentoSQL(**data)
+            self._db.add(sql)
+        else:
+            sql = self._db.get(MedicamentoSQL, entity.id)
+            if not sql:
+                sql = MedicamentoSQL(**data)
+                self._db.add(sql)
+            else:
+                for k, v in data.items():
+                    setattr(sql, k, v)
+        try:
+            self._db.commit()
+        except IntegrityError:
+            self._db.rollback()
+            raise ValueError("El código ya está registrado")
         self._db.refresh(sql)
         return Medicamento(**as_dict(sql))
 
@@ -141,3 +180,31 @@ class MedicamentoRepo(RepositoryPort[Medicamento]):
         if obj:
             self._db.delete(obj)
             self._db.commit()
+
+    def list_paginated(
+        self,
+        limit: int,
+        offset: int = 0,
+        filters: Mapping[str, object] | None = None,
+    ) -> Tuple[List[Medicamento], int]:
+        query = self._db.query(MedicamentoSQL)
+        if filters:
+            if text := filters.get("nombre_codigo"):
+                pattern = f"%{text}%"
+                query = query.filter(
+                    MedicamentoSQL.nombre.ilike(pattern)
+                    | MedicamentoSQL.codigo.ilike(pattern)
+                )
+            if lab := filters.get("laboratorio"):
+                query = query.filter(MedicamentoSQL.laboratorio == lab)
+            if typ := filters.get("tipo"):
+                query = query.filter(MedicamentoSQL.tipo == typ)
+        total = query.with_entities(func.count()).scalar() or 0
+        items_sql = (
+            query.order_by(MedicamentoSQL.creado_en.desc())
+            .limit(limit)
+            .offset(offset)
+            .all()
+        )
+        items = [Medicamento(**as_dict(m)) for m in items_sql]
+        return items, total

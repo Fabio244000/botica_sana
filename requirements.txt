@@ -102,3 +102,4 @@ virtualenv==20.31.2
     # via pre-commit
 win32-setctime==1.2.0
     # via loguru
+email_validator==2.2.0
